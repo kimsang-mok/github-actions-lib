@@ -1,0 +1,40 @@
+name: "Setup Gradle (JDK)"
+description: >
+  Provisions a Java runtime for a Gradle project and makes the wrapper
+  executable. The repository must already be checked out before this runs.
+
+inputs:
+  runtime-version:
+    description: "JDK version to install. Empty falls back to the default."
+    required: false
+    default: ""
+  working-directory:
+    description: "Directory that contains the Gradle build."
+    required: false
+    default: "."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up JDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: ${{ inputs.runtime-version != '' && inputs.runtime-version || '21' }}
+        cache: gradle
+
+    - name: Make Gradle wrapper executable
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        if [ -f ./gradlew ]; then
+          chmod +x ./gradlew
+        fi
+
+    - name: Check tooling
+      shell: bash
+      run: |
+        echo "===== Tooling (gradle) ====="
+        java -version
+        git --version
+        date

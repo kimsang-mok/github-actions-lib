@@ -1,0 +1,114 @@
+name: Initialization
+description: Resolve project metadata and Docker image tag
+
+inputs:
+  build-tool:
+    description: Build tool
+    required: true
+
+  runtime-version:
+    description: Runtime version
+    required: false
+    default: ""
+
+  working-directory:
+    description: Project working directory
+    required: false
+    default: "."
+
+outputs:
+  group-id:
+    description: Resolved group ID
+    value: ${{ steps[inputs.build-tool].outputs.group-id }}
+
+  artifact-id:
+    description: Resolved artifact ID
+    value: ${{ steps[inputs.build-tool].outputs.artifact-id }}
+
+  version:
+    description: Resolved project version
+    value: ${{ steps[inputs.build-tool].outputs.version }}
+
+  image-tag:
+    description: Docker image tag
+    value: ${{ steps[inputs.build-tool].outputs.image-tag }}
+
+runs:
+  using: composite
+
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # ------------------------------------------------------------
+    # Runtime setup
+    # ------------------------------------------------------------
+
+    - name: Setup Maven
+      if: inputs.build-tool == 'maven'
+      uses: $/.github/actions/setup/maven
+      with:
+        runtime-version: ${{ inputs.runtime-version }}
+
+    - name: Setup Gradle
+      if: inputs.build-tool == 'gradle'
+      uses: $/.github/actions/setup/gradle
+      with:
+        runtime-version: ${{ inputs.runtime-version }}
+
+    - name: Setup Node
+      if: inputs.build-tool == 'npm'
+      uses: $/.github/actions/setup/npm
+      with:
+        runtime-version: ${{ inputs.runtime-version }}
+
+    - name: Setup Python
+      if: inputs.build-tool == 'python'
+      uses: $/.github/actions/setup/python
+      with:
+        runtime-version: ${{ inputs.runtime-version }}
+
+    # ------------------------------------------------------------
+    # Version resolution
+    # ------------------------------------------------------------
+
+    - name: Resolve Maven
+      id: maven
+      if: inputs.build-tool == 'maven'
+      uses: $/.github/actions/version/maven
+      with:
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Resolve Gradle
+      id: gradle
+      if: inputs.build-tool == 'gradle'
+      uses: $/.github/actions/version/gradle
+      with:
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Resolve npm
+      id: npm
+      if: inputs.build-tool == 'npm'
+      uses: $/.github/actions/version/npm
+      with:
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Resolve Python
+      id: python
+      if: inputs.build-tool == 'python'
+      uses: $/.github/actions/version/python
+      with:
+        working-directory: ${{ inputs.working-directory }}
+
+    # ------------------------------------------------------------
+    # Summary
+    # ------------------------------------------------------------
+
+    - name: Summary
+      shell: bash
+      run: |
+        echo "Build tool: ${{ inputs.build-tool }}"
+        echo "Group: ${{ steps[inputs.build-tool].outputs.group-id }}"
+        echo "Artifact: ${{ steps[inputs.build-tool].outputs.artifact-id }}"
+        echo "Version: ${{ steps[inputs.build-tool].outputs.version }}"
+        echo "Image tag: ${{ steps[inputs.build-tool].outputs.image-tag }}"

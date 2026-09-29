@@ -1,0 +1,80 @@
+name: "Resolve Version (Gradle)"
+description: "Reads group/name/version from the Gradle project and computes the CI image tag."
+
+inputs:
+  working-directory:
+    description: "Directory that contains the Gradle build."
+    required: false
+    default: "."
+
+outputs:
+  group-id:
+    value: ${{ steps.resolve.outputs.group-id }}
+  artifact-id:
+    value: ${{ steps.resolve.outputs.artifact-id }}
+  version:
+    value: ${{ steps.resolve.outputs.version }}
+  image-tag:
+    value: ${{ steps.resolve.outputs.image-tag }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Resolve project coordinates
+      id: resolve
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+
+        GRADLE="./gradlew"
+        [ -x "${GRADLE}" ] || GRADLE="gradle"
+
+        # Evaluate the real (possibly dynamic) version with a
+        # throw-away init script so variables/functions in the build are honoured.
+        INIT_SCRIPT="$(mktemp)"
+        cat > "${INIT_SCRIPT}" <<'GRADLE'
+        rootProject {
+            tasks.register("printProjectCoordinates") {
+                doLast {
+                    println "GROUP_ID=" + project.group
+                    println "ARTIFACT_ID=" + project.name
+                    println "VERSION=" + project.version
+                }
+            }
+        }
+        GRADLE
+
+        COORDS=$(${GRADLE} --console=plain -I "${INIT_SCRIPT}" printProjectCoordinates 2>/dev/null || true)
+        rm -f "${INIT_SCRIPT}"
+
+        GROUP_ID=$(printf '%s\n' "${COORDS}" | sed -n 's/^GROUP_ID=//p' | tail -n1)
+        ARTIFACT_ID=$(printf '%s\n' "${COORDS}" | sed -n 's/^ARTIFACT_ID=//p' | tail -n1)
+        VERSION=$(printf '%s\n' "${COORDS}" | sed -n 's/^VERSION=//p' | tail -n1)
+
+        # Fallback: read static declarations straight from the build files.
+        if [ -z "${VERSION}" ] || [ "${VERSION}" = "unspecified" ]; then
+          if [ -f gradle.properties ]; then
+            VERSION=$(sed -n 's/^version=//p' gradle.properties | head -n1)
+          fi
+          if [ -z "${VERSION}" ] && [ -f build.gradle ]; then
+            VERSION=$(sed -n -E "s/^[[:space:]]*version[[:space:]]*=[[:space:]]*['\"]?([^'\"]+)['\"]?.*/\1/p" build.gradle | head -n1)
+          fi
+          if [ -z "${VERSION}" ] && [ -f build.gradle.kts ]; then
+            VERSION=$(sed -n -E 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' build.gradle.kts | head -n1)
+          fi
+        fi
+
+        if [ -z "${VERSION}" ] || [ "${VERSION}" = "unspecified" ]; then
+          echo "::error::Gradle project version is not set (got '${VERSION}'). Define 'version' in your build."
+          exit 1
+        fi
+
+        # normalise a SNAPSHOT suffix the same way Maven does for the tag
+        SHORT_SHA=$(git rev-parse --short HEAD)
+        IMAGE_TAG="${VERSION}-${SHORT_SHA}"
+
+        echo "group-id=${GROUP_ID}" >> "$GITHUB_OUTPUT"
+        echo "artifact-id=${ARTIFACT_ID}" >> "$GITHUB_OUTPUT"
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        echo "image-tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"

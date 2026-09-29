@@ -1,0 +1,34 @@
+name: "Build (Maven)"
+description: "Compiles, unit-tests and packages a Maven project."
+
+inputs:
+  working-directory:
+    description: "Directory that contains pom.xml."
+    required: false
+    default: "."
+  skip-tests:
+    description: "Skip unit tests."
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Build & unit test
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        echo "===== Build & Unit Test (maven) ====="
+        if [ "${{ inputs.skip-tests }}" = "true" ]; then
+          mvn -B -DskipTests package
+        else
+          mvn -B package
+        fi
+
+    - name: Publish unit test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: surefire-reports
+        path: ${{ inputs.working-directory }}/target/surefire-reports/*.xml
+        if-no-files-found: ignore

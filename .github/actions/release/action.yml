@@ -1,0 +1,257 @@
+name: "Release (Close Version)"
+description: >
+  Performs a git-flow "release finish": sets the release version in the project
+  manifest, tags it, merges the release branch into the release branch (e.g.
+  main) and develop, and bumps develop to the next snapshot version. The
+  manifest rewrite is delegated to the version-bump provider for the detected
+  build tool.
+
+inputs:
+  build-tool:
+    description: "Build tool: maven | gradle | npm | python."
+    required: true
+  runtime-version:
+    description: "Runtime version used by the version-bump provider."
+    required: false
+    default: ""
+  working-directory:
+    required: false
+    default: "."
+  release-branch:
+    required: false
+    default: "main"
+  develop-branch:
+    required: false
+    default: "develop"
+  release-version:
+    description: "Explicit release version. Empty derives it from the current version."
+    required: false
+    default: ""
+  next-snapshot-version:
+    description: "Explicit next snapshot version. Empty auto-increments the patch."
+    required: false
+    default: ""
+  git-user-name:
+    required: false
+    default: "github-actions[bot]"
+  git-user-email:
+    required: false
+    default: "github-actions[bot]@users.noreply.github.com"
+  github-token:
+    required: true
+
+outputs:
+  released-version:
+    value: ${{ steps.compute.outputs.released-version }}
+  tag-name:
+    value: ${{ steps.compute.outputs.tag-name }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout (full history)
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ inputs.github-token }}
+
+    - name: Configure git identity
+      shell: bash
+      run: |
+        git config user.name "${{ inputs.git-user-name }}"
+        git config user.email "${{ inputs.git-user-email }}"
+
+    # ---- install the runtime needed by the version-bump provider ----------
+    - name: Setup runtime (maven)
+      if: inputs.build-tool == 'maven'
+      uses: $/.github/actions/setup/maven
+      with:
+        runtime-version: ${{ inputs.runtime-version }}
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Setup runtime (gradle)
+      if: inputs.build-tool == 'gradle'
+      uses: $/.github/actions/setup/gradle
+      with:
+        runtime-version: ${{ inputs.runtime-version }}
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Setup runtime (npm)
+      if: inputs.build-tool == 'npm'
+      uses: $/.github/actions/setup/npm
+      with:
+        runtime-version: ${{ inputs.runtime-version }}
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Setup runtime (python)
+      if: inputs.build-tool == 'python'
+      uses: $/.github/actions/setup/python
+      with:
+        runtime-version: ${{ inputs.runtime-version }}
+        working-directory: ${{ inputs.working-directory }}
+
+    # ---- resolve the current version --------------------------------------
+    - name: Read current version (maven)
+      if: inputs.build-tool == 'maven'
+      id: maven
+      uses: $/.github/actions/version/maven
+      with:
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Read current version (gradle)
+      if: inputs.build-tool == 'gradle'
+      id: gradle
+      uses: $/.github/actions/version/gradle
+      with:
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Read current version (npm)
+      if: inputs.build-tool == 'npm'
+      id: npm
+      uses: $/.github/actions/version/npm
+      with:
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Read current version (python)
+      if: inputs.build-tool == 'python'
+      id: python
+      uses: $/.github/actions/version/python
+      with:
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Compute version numbers
+      id: compute
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        CURRENT_VERSION="${{ steps[inputs.build-tool].outputs.version }}"
+        RELEASE_VERSION="${{ inputs.release-version }}"
+        if [ -z "${RELEASE_VERSION}" ]; then
+          RELEASE_VERSION="${CURRENT_VERSION%-SNAPSHOT}"
+        fi
+        TAG_NAME="v${RELEASE_VERSION}"
+
+        NEXT_VERSION="${{ inputs.next-snapshot-version }}"
+        if [ -z "${NEXT_VERSION}" ]; then
+          IFS='.' read -r MAJOR MINOR PATCH <<< "${RELEASE_VERSION}"
+          PATCH=${PATCH//[!0-9]/}      # tolerate non-numeric patch segments
+          NEXT_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))-SNAPSHOT"
+        fi
+
+        echo "released-version=${RELEASE_VERSION}" >> "$GITHUB_OUTPUT"
+        echo "tag-name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+        echo "next-version=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+
+    # ---- cut the release branch and stamp the release version -------------
+    - name: Create/refresh release branch
+      shell: bash
+      run: |
+        set -euo pipefail
+        git fetch origin --tags
+        if git show-ref --verify --quiet "refs/remotes/origin/release/${{ steps.compute.outputs.released-version }}"; then
+          git checkout -B "release/${{ steps.compute.outputs.released-version }}" \
+            "origin/release/${{ steps.compute.outputs.released-version }}"
+        else
+          git checkout -B "release/${{ steps.compute.outputs.released-version }}" \
+            "origin/${{ inputs.develop-branch }}"
+        fi
+
+    - name: Stamp release version (maven)
+      if: inputs.build-tool == 'maven'
+      uses: $/.github/actions/version-bump/maven
+      with:
+        version: ${{ steps.compute.outputs.released-version }}
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Stamp release version (gradle)
+      if: inputs.build-tool == 'gradle'
+      uses: $/.github/actions/version-bump/gradle
+      with:
+        version: ${{ steps.compute.outputs.released-version }}
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Stamp release version (npm)
+      if: inputs.build-tool == 'npm'
+      uses: $/.github/actions/version-bump/npm
+      with:
+        version: ${{ steps.compute.outputs.released-version }}
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Stamp release version (python)
+      if: inputs.build-tool == 'python'
+      uses: $/.github/actions/version-bump/python
+      with:
+        version: ${{ steps.compute.outputs.released-version }}
+        working-directory: ${{ inputs.working-directory }}
+
+    # ---- merge into release branch, tag, push -----------------------------
+    - name: Merge into ${{ inputs.release-branch }} and tag
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        git commit -am "release: set version ${{ steps.compute.outputs.released-version }}" || true
+        git push -u origin "release/${{ steps.compute.outputs.released-version }}"
+
+        git checkout "${{ inputs.release-branch }}"
+        git merge --no-ff "release/${{ steps.compute.outputs.released-version }}" \
+          -m "merge: release ${{ steps.compute.outputs.released-version }} into ${{ inputs.release-branch }}"
+        git tag -a "${{ steps.compute.outputs.tag-name }}" \
+          -m "Release ${{ steps.compute.outputs.released-version }}"
+        git push origin "${{ inputs.release-branch }}"
+        git push origin "${{ steps.compute.outputs.tag-name }}"
+
+    # ---- merge back into develop and bump to next snapshot ----------------
+    - name: Merge into ${{ inputs.develop-branch }} and bump
+      shell: bash
+      run: |
+        set -euo pipefail
+        git checkout "${{ inputs.develop-branch }}"
+        git merge --no-ff "release/${{ steps.compute.outputs.released-version }}" \
+          -m "merge: release ${{ steps.compute.outputs.released-version }} back into ${{ inputs.develop-branch }}"
+
+    - name: Bump develop (maven)
+      if: inputs.build-tool == 'maven'
+      uses: $/.github/actions/version-bump/maven
+      with:
+        version: ${{ steps.compute.outputs.next-version }}
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Bump develop (gradle)
+      if: inputs.build-tool == 'gradle'
+      uses: $/.github/actions/version-bump/gradle
+      with:
+        version: ${{ steps.compute.outputs.next-version }}
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Bump develop (npm)
+      if: inputs.build-tool == 'npm'
+      uses: $/.github/actions/version-bump/npm
+      with:
+        version: ${{ steps.compute.outputs.next-version }}
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Bump develop (python)
+      if: inputs.build-tool == 'python'
+      uses: $/.github/actions/version-bump/python
+      with:
+        version: ${{ steps.compute.outputs.next-version }}
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Commit bump and clean up
+      shell: bash
+      run: |
+        set -euo pipefail
+        git commit -am "release: bump develop to next snapshot ${{ steps.compute.outputs.next-version }}" || true
+        git push origin "${{ inputs.develop-branch }}"
+        git push origin --delete "release/${{ steps.compute.outputs.released-version }}" || true
+
+    - name: Write summary
+      shell: bash
+      run: |
+        {
+          echo "### :label: Release"
+          echo "- released version: \`${{ steps.compute.outputs.released-version }}\` (tag \`${{ steps.compute.outputs.tag-name }}\`)"
+          echo "- develop bumped to: \`${{ steps.compute.outputs.next-version }}\`"
+        } >> "$GITHUB_STEP_SUMMARY"

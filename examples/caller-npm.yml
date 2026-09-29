@@ -1,0 +1,15 @@
+# Example caller for a Node project. Copy into your repo's .github/workflows/.
+name: Release (npm)
+on:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: kimsang-mok/github-actions-lib/.github/workflows/ci-release.yml@main
+    with:
+      image-name: my-org/my-node-app
+      build-tool: npm   # auto-detected from package.json
+      runtime-version: "20"
+      skip-tests: false
+    secrets: inherit

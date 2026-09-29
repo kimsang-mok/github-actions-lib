@@ -1,0 +1,15 @@
+# Example caller for a Python project. Copy into your repo's .github/workflows/.
+name: Release (Python)
+on:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: kimsang-mok/github-actions-lib/.github/workflows/ci-release.yml@main
+    with:
+      image-name: my-org/my-python-app
+      build-tool: python  # auto-detected from pyproject.toml
+      runtime-version: "3.12"
+      skip-tests: false
+    secrets: inherit

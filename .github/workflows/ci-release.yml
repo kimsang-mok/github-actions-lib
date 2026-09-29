@@ -1,0 +1,216 @@
+name: CI / Release
+
+# Build-tool agnostic CI + release pipeline
+#
+# The build tool is resolved once (either from the `build-tool` input or by
+# auto-detecting marker files) and then every stage routes to the matching
+# provider composite action through declarative `if:` conditions - there is no
+# shell-level if/else branching inside the providers themselves.
+
+on:
+  workflow_call:
+    inputs:
+      build-tool:
+        description: >
+          Build tool to use: maven | gradle | npm | python. Use "auto" (default)
+          to detect it from the repository contents.
+        type: string
+        default: "auto"
+      runtime-version:
+        description: >
+          Runtime version for the detected tool (JDK / Node / Python). Empty
+          uses each provider's default (JDK 21, Node 20, Python 3.12).
+        type: string
+        default: ""
+      java-version:
+        description: "Deprecated. Use runtime-version. Kept as a fallback."
+        type: string
+        default: ""
+      working-directory:
+        description: "Path to the project (folder containing the build manifest)."
+        type: string
+        default: "."
+      registry:
+        description: "Container registry host"
+        type: string
+        default: "ghcr.io"
+      image-name:
+        description: "Image name without registry/tag, e.g. my-org/my-app"
+        type: string
+        required: true
+      dockerfile:
+        description: "Path to the Dockerfile, relative to working-directory"
+        type: string
+        default: "Dockerfile"
+      release-branch:
+        description: "Branch that receives released (non-SNAPSHOT) version"
+        type: string
+        default: "main"
+      develop-branch:
+        description: "Branch that receives the next development snapshot"
+        type: string
+        default: "develop"
+      skip-tests:
+        description: "Skip unit tests during the build stage"
+        type: boolean
+        default: true
+      skip-release:
+        description: "Skip the release (close version) stage"
+        type: boolean
+        default: false
+      skip-promote:
+        description: "Skip the docker promote stage"
+        type: boolean
+        default: false
+
+    secrets:
+      REGISTRY_USERNAME:
+        required: true
+      REGISTRY_PASSWORD:
+        required: true
+      RELEASE_GIT_TOKEN:
+        required: false
+      NOTIFY_WEBHOOK:
+        required: false
+
+    outputs:
+      build-tool:
+        value: ${{ jobs.detect.outputs.build-tool }}
+      version:
+        value: ${{ jobs.initialization.outputs.version }}
+      image-ref:
+        value: ${{ jobs.docker-build.outputs.image-ref }}
+      released-version:
+        value: ${{ jobs.release.outputs.released-version }}
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Resolve which build tool to use (explicit input or auto-detection)
+  # ---------------------------------------------------------------------------
+  detect:
+    name: Detect Build Tool
+    runs-on: ubuntu-latest
+    outputs:
+      build-tool: ${{ steps.detect.outputs.build-tool }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect
+        id: detect
+        uses: $/.github/actions/detect
+        with:
+          build-tool: ${{ inputs.build-tool }}
+          working-directory: ${{ inputs.working-directory }}
+
+  # ---------------------------------------------------------------------------
+  # Provision the runtime and resolve version + image tag
+  # ---------------------------------------------------------------------------
+  initialization:
+    name: Initialization
+    needs: detect
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.init.outputs.version }}
+      artifact-id: ${{ steps.init.outputs.artifact-id }}
+      group-id: ${{ steps.init.outputs.group-id }}
+      image-tag: ${{ steps.init.outputs.image-tag }}
+    steps:
+      - name: Initialization
+        id: init
+        uses: $/.github/actions/initialization
+        with:
+          build-tool: ${{ needs.detect.outputs.build-tool }}
+          runtime-version: ${{ inputs.runtime-version || inputs.java-version }}
+          working-directory: ${{ inputs.working-directory }}
+
+  # ---------------------------------------------------------------------------
+  # Build, test and push the CI image
+  # ---------------------------------------------------------------------------
+  docker-build:
+    name: Build & Docker
+    needs: [detect, initialization]
+    runs-on: ubuntu-latest
+    outputs:
+      image-ref: ${{ steps.build.outputs.image-ref }}
+    steps:
+      - name: Docker Build
+        id: build
+        uses: $/.github/actions/docker-build
+        with:
+          build-tool: ${{ needs.detect.outputs.build-tool }}
+          runtime-version: ${{ inputs.runtime-version || inputs.java-version }}
+          working-directory: ${{ inputs.working-directory }}
+          dockerfile: ${{ inputs.dockerfile }}
+          registry: ${{ inputs.registry }}
+          image-name: ${{ inputs.image-name }}
+          image-tag: ${{ needs.initialization.outputs.image-tag }}
+          registry-username: ${{ secrets.REGISTRY_USERNAME }}
+          registry-password: ${{ secrets.REGISTRY_PASSWORD }}
+          skip-tests: ${{ inputs.skip-tests }}
+
+  # ---------------------------------------------------------------------------
+  # Close the version (git-flow release finish)
+  # ---------------------------------------------------------------------------
+  release:
+    name: Close Version / Release
+    needs: [detect, initialization, docker-build]
+    if: ${{ !inputs.skip-release }}
+    runs-on: ubuntu-latest
+    outputs:
+      released-version: ${{ steps.release.outputs.released-version }}
+      tag-name: ${{ steps.release.outputs.tag-name }}
+    steps:
+      - name: Release
+        id: release
+        uses: $/.github/actions/release
+        with:
+          build-tool: ${{ needs.detect.outputs.build-tool }}
+          runtime-version: ${{ inputs.runtime-version || inputs.java-version }}
+          working-directory: ${{ inputs.working-directory }}
+          release-branch: ${{ inputs.release-branch }}
+          develop-branch: ${{ inputs.develop-branch }}
+          github-token: ${{ secrets.RELEASE_GIT_TOKEN || secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # Promote the CI image to release tags
+  # ---------------------------------------------------------------------------
+  docker-promote:
+    name: Docker Promote
+    needs: [initialization, docker-build, release]
+    if: ${{ !inputs.skip-promote && !inputs.skip-release }}
+    runs-on: ubuntu-latest
+    outputs:
+      promote-refs: ${{ steps.promote.outputs.promote-refs }}
+    steps:
+      - name: Docker Promote
+        id: promote
+        uses: $/.github/actions/docker-promote
+        with:
+          registry: ${{ inputs.registry }}
+          image-name: ${{ inputs.image-name }}
+          source-tag: ${{ needs.initialization.outputs.image-tag }}
+          release-version: ${{ needs.release.outputs.released-version }}
+          registry-username: ${{ secrets.REGISTRY_USERNAME }}
+          registry-password: ${{ secrets.REGISTRY_PASSWORD }}
+
+  # ---------------------------------------------------------------------------
+  # Always-run summary / notification
+  # ---------------------------------------------------------------------------
+  post:
+    name: Post
+    needs: [detect, initialization, docker-build, release, docker-promote]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post Process
+        uses: $/.github/actions/post-process
+        with:
+          status: ${{ contains(join(needs.*.result, ','), 'failure') && 'failure' || 'success' }}
+          version: ${{ needs.release.outputs.released-version || needs.initialization.outputs.version }}
+          image-ref: ${{ needs.docker-build.outputs.image-ref }}
+          notify-webhook: ${{ secrets.NOTIFY_WEBHOOK }}

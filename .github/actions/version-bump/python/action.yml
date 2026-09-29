@@ -1,0 +1,102 @@
+name: "Bump Version (Python)"
+description: "Writes a new version into pyproject.toml / setup.cfg / setup.py / __init__.py. Does not commit."
+
+inputs:
+  version:
+    description: "The version to set (e.g. 1.2.0)."
+    required: true
+  working-directory:
+    description: "Directory that contains the Python project."
+    required: false
+    default: "."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set version
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+
+        NEW_VERSION="${{ inputs.version }}" python - <<'PY'
+        import glob
+        import os
+        import re
+        import sys
+
+        new = os.environ["NEW_VERSION"]
+
+        def bump_pyproject():
+            path = "pyproject.toml"
+            if not os.path.exists(path):
+                return False
+            text = open(path).read()
+            # PEP 621: version = "x" ; Poetry: version = "x"
+            new_text, n = re.subn(
+                r'(?m)^(\s*version\s*=\s*)["\'][^"\']*["\']',
+                lambda m: f'{m.group(1)}"{new}"',
+                text,
+                count=1,
+            )
+            if n:
+                open(path, "w").write(new_text)
+                return True
+            return False
+
+        def bump_setup_cfg():
+            path = "setup.cfg"
+            if not os.path.exists(path):
+                return False
+            text = open(path).read()
+            new_text, n = re.subn(
+                r'(?m)^(\s*version\s*=\s*)\S+',
+                lambda m: f"{m.group(1)}{new}",
+                text,
+                count=1,
+            )
+            if n:
+                open(path, "w").write(new_text)
+                return True
+            return False
+
+        def bump_setup_py():
+            path = "setup.py"
+            if not os.path.exists(path):
+                return False
+            text = open(path).read()
+            new_text, n = re.subn(
+                r'(version\s*=\s*)["\'][^"\']*["\']',
+                lambda m: f'{m.group(1)}"{new}"',
+                text,
+                count=1,
+            )
+            if n:
+                open(path, "w").write(new_text)
+                return True
+            return False
+
+        def bump_init():
+            for path in glob.glob("*/__init__.py") + ["__init__.py"]:
+                text = open(path).read()
+                new_text, n = re.subn(
+                    r'(__version__\s*=\s*)["\'][^"\']*["\']',
+                    lambda m: f'{m.group(1)}"{new}"',
+                    text,
+                    count=1,
+                )
+                if n:
+                    open(path, "w").write(new_text)
+                    return True
+            return False
+
+        for fn in (bump_pyproject, bump_setup_cfg, bump_setup_py, bump_init):
+            if fn():
+                print(f"Updated version to {new} via {fn.__name__}")
+                sys.exit(0)
+
+        print("Could not find a version declaration to update.", file=sys.stderr)
+        sys.exit(1)
+        PY
+
+        git --no-pager diff --stat

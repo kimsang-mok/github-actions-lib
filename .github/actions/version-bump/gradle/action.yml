@@ -1,0 +1,35 @@
+name: "Bump Version (Gradle)"
+description: "Writes a new version into gradle.properties or build.gradle(.kts). Does not commit."
+
+inputs:
+  version:
+    description: "The version to set (e.g. 1.2.0 or 1.2.1-SNAPSHOT)."
+    required: true
+  working-directory:
+    description: "Directory that contains the Gradle build."
+    required: false
+    default: "."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set version
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        NEW_VERSION="${{ inputs.version }}"
+
+        if [ -f gradle.properties ] && grep -qE '^version=' gradle.properties; then
+          sed -i -E "s/^version=.*/version=${NEW_VERSION}/" gradle.properties
+        elif [ -f build.gradle.kts ]; then
+          sed -i -E "s/^([[:space:]]*version[[:space:]]*=[[:space:]]*)[\"'][^\"']*[\"']/\1\"${NEW_VERSION}\"/" build.gradle.kts
+        elif [ -f build.gradle ]; then
+          sed -i -E "s/^([[:space:]]*version[[:space:]]*=[[:space:]]*)([\"'][^\"']*[\"'])/\1'${NEW_VERSION}'/" build.gradle
+        else
+          echo "::error::Could not find a version declaration in gradle.properties or build.gradle(.kts)."
+          exit 1
+        fi
+
+        echo "Set Gradle version to ${NEW_VERSION}"
+        git --no-pager diff --stat

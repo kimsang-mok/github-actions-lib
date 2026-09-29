@@ -1,0 +1,60 @@
+name: "Detect Build Tool"
+description: >
+  Resolves which build tool the project uses. If an explicit tool is provided it
+  is passed through; otherwise the repository is inspected for well-known marker
+  files (pom.xml, build.gradle, package.json, pyproject.toml, ...).
+
+inputs:
+  build-tool:
+    description: "Explicit build tool (maven|gradle|npm|python), or 'auto' to detect."
+    required: false
+    default: "auto"
+  working-directory:
+    description: "Directory that contains the project manifest."
+    required: false
+    default: "."
+
+outputs:
+  build-tool:
+    description: "Resolved build tool: maven | gradle | npm | python."
+    value: ${{ steps.detect.outputs.build-tool }}
+
+runs:
+  using: "composite"
+  steps:
+    # NOTE: detection is the one place branching is unavoidable - it decides
+    # *which* provider to route to. Every provider below is branch-free.
+    - name: Resolve build tool
+      id: detect
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+
+        TOOL="${{ inputs.build-tool }}"
+
+        if [ -z "${TOOL}" ] || [ "${TOOL}" = "auto" ]; then
+          if [ -f pom.xml ]; then
+            TOOL="maven"
+          elif compgen -G "build.gradle*" > /dev/null || compgen -G "settings.gradle*" > /dev/null; then
+            TOOL="gradle"
+          elif [ -f package.json ]; then
+            TOOL="npm"
+          elif [ -f pyproject.toml ] || [ -f setup.py ] || [ -f setup.cfg ] || [ -f requirements.txt ]; then
+            TOOL="python"
+          else
+            echo "::error::Could not auto-detect a build tool in '${{ inputs.working-directory }}'. Set the 'build-tool' input explicitly (maven|gradle|npm|python)."
+            exit 1
+          fi
+        fi
+
+        case "${TOOL}" in
+          maven|gradle|npm|python) ;;
+          *)
+            echo "::error::Unsupported build-tool '${TOOL}'. Expected one of: maven, gradle, npm, python."
+            exit 1
+            ;;
+        esac
+
+        echo "build-tool=${TOOL}" >> "$GITHUB_OUTPUT"
+        echo "Detected build tool: ${TOOL}"

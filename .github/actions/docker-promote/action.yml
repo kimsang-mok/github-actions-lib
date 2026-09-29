@@ -1,0 +1,67 @@
+name: "Docker Promote"
+description: >
+  Promotes a previously built CI image to release tags (release version +
+  extra tags such as "latest") by re-tagging and re-pushing, without rebuilding.
+
+inputs:
+  registry:
+    required: true
+  image-name:
+    required: true
+  source-tag:
+    description: "Existing CI image tag to promote from"
+    required: true
+  release-version:
+    description: "Released version to tag the promoted image with"
+    required: true
+  additional-tags:
+    description: "Space separated list of extra tags to also apply"
+    required: false
+    default: "latest"
+  registry-username:
+    required: true
+  registry-password:
+    required: true
+
+outputs:
+  promote-refs:
+    description: "Space separated list of fully qualified refs that were pushed"
+    value: ${{ steps.promote.outputs.refs }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Log in to ${{ inputs.registry }}
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.registry-username }}
+        password: ${{ inputs.registry-password }}
+
+    - name: Promote image
+      id: promote
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "===== Docker Promote ====="
+        SRC="${{ inputs.registry }}/${{ inputs.image-name }}:${{ inputs.source-tag }}"
+        docker pull "${SRC}"
+
+        REFS=""
+        for TAG in "${{ inputs.release-version }}" ${{ inputs.additional-tags }}; do
+          DEST="${{ inputs.registry }}/${{ inputs.image-name }}:${TAG}"
+          docker tag "${SRC}" "${DEST}"
+          docker push "${DEST}"
+          REFS="${REFS} ${DEST}"
+        done
+
+        echo "refs=${REFS}" >> "$GITHUB_OUTPUT"
+
+        {
+          echo "### :rocket: Docker Promote"
+          echo "- source: \`${SRC}\`"
+          echo "- promoted to:"
+          for REF in ${REFS}; do
+            echo "  - \`${REF}\`"
+          done
+        } >> "$GITHUB_STEP_SUMMARY"

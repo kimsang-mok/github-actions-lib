@@ -1,0 +1,21 @@
+name: "Bump Version (npm)"
+description: "Writes a new version into package.json (and lockfile). Does not commit or tag."
+
+inputs:
+  version:
+    description: "The version to set (must be valid semver, e.g. 1.2.0 or 1.2.1-SNAPSHOT)."
+    required: true
+  working-directory:
+    description: "Directory that contains package.json."
+    required: false
+    default: "."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set version
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        npm version --no-git-tag-version --allow-same-version "${{ inputs.version }}"

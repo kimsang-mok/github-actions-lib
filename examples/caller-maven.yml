@@ -1,0 +1,13 @@
+name: Release (Maven)
+on:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: kimsang-mok/github-actions-lib/.github/workflows/ci-release.yml@main
+    with:
+      image-name: my-org/my-java-app
+      build-tool: maven   # auto-detected from pom.xml
+      runtime-version: "21"
+    secrets: inherit

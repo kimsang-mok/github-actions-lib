@@ -1,0 +1,48 @@
+name: "Resolve Version (npm)"
+description: "Reads name/version from package.json and computes the CI image tag."
+
+inputs:
+  working-directory:
+    description: "Directory that contains package.json."
+    required: false
+    default: "."
+
+outputs:
+  group-id:
+    value: ${{ steps.resolve.outputs.group-id }}
+  artifact-id:
+    value: ${{ steps.resolve.outputs.artifact-id }}
+  version:
+    value: ${{ steps.resolve.outputs.version }}
+  image-tag:
+    value: ${{ steps.resolve.outputs.image-tag }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Resolve project coordinates
+      id: resolve
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+
+        VERSION=$(node -p "require('./package.json').version")
+        NAME=$(node -p "require('./package.json').name")
+
+        # "@scope/pkg" -> group "@scope", artifact "pkg"; otherwise group is empty
+        if [[ "${NAME}" == @*/* ]]; then
+          GROUP_ID="${NAME%%/*}"
+          ARTIFACT_ID="${NAME##*/}"
+        else
+          GROUP_ID=""
+          ARTIFACT_ID="${NAME}"
+        fi
+
+        SHORT_SHA=$(git rev-parse --short HEAD)
+        IMAGE_TAG="${VERSION}-${SHORT_SHA}"
+
+        echo "group-id=${GROUP_ID}" >> "$GITHUB_OUTPUT"
+        echo "artifact-id=${ARTIFACT_ID}" >> "$GITHUB_OUTPUT"
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        echo "image-tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"

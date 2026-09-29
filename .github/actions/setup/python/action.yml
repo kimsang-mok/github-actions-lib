@@ -1,0 +1,31 @@
+name: "Setup Python"
+description: >
+  Provisions a Python runtime for a Python project. The repository must already
+  be checked out before this runs.
+
+inputs:
+  runtime-version:
+    description: "Python version to install. Empty falls back to the default."
+    required: false
+    default: ""
+  working-directory:
+    description: "Directory that contains the project."
+    required: false
+    default: "."
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.runtime-version != '' && inputs.runtime-version || '3.12' }}
+
+    - name: Check tooling
+      shell: bash
+      run: |
+        echo "===== Tooling (python) ====="
+        python --version
+        pip --version
+        git --version
+        date

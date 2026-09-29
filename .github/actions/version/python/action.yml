@@ -1,0 +1,128 @@
+name: "Resolve Version (Python)"
+description: >
+  Reads name/version from pyproject.toml (PEP 621 or Poetry), setup.cfg,
+  setup.py, or <pkg>/__init__.py and computes the CI image tag.
+
+inputs:
+  working-directory:
+    description: "Directory that contains the Python project."
+    required: false
+    default: "."
+
+outputs:
+  group-id:
+    value: ${{ steps.resolve.outputs.group-id }}
+  artifact-id:
+    value: ${{ steps.resolve.outputs.artifact-id }}
+  version:
+    value: ${{ steps.resolve.outputs.version }}
+  image-tag:
+    value: ${{ steps.resolve.outputs.image-tag }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Resolve project coordinates
+      id: resolve
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+
+        RESOLVED=$(python - <<'PY'
+        import configparser
+        import glob
+        import os
+        import re
+        import sys
+
+        name = None
+        version = None
+
+        def from_pyproject():
+            global name, version
+
+            if not os.path.exists("pyproject.toml"):
+                return
+
+            import tomllib
+
+            with open("pyproject.toml", "rb") as fh:
+                data = tomllib.load(fh)
+
+            project = data.get("project", {})
+
+            name = name or project.get("name")
+            version = version or project.get("version")
+
+            poetry = data.get("tool", {}).get("poetry", {})
+
+            name = name or poetry.get("name")
+            version = version or poetry.get("version")
+
+        def from_setup_cfg():
+            global name, version
+            if not os.path.exists("setup.cfg"):
+                return
+            cfg = configparser.ConfigParser()
+            cfg.read("setup.cfg")
+            if cfg.has_section("metadata"):
+                name = name or cfg.get("metadata", "name", fallback=None)
+                version = version or cfg.get("metadata", "version", fallback=None)
+
+        def from_setup_py():
+            global name, version
+            if not os.path.exists("setup.py"):
+                return
+            text = open("setup.py").read()
+            if not name:
+                m = re.search(r"name\s*=\s*['\"]([^'\"]+)['\"]", text)
+                name = m.group(1) if m else None
+            if not version:
+                m = re.search(r"version\s*=\s*['\"]([^'\"]+)['\"]", text)
+                version = m.group(1) if m else None
+
+        def from_package_init():
+            global version
+            if version:
+                return
+            for path in glob.glob("*/__init__.py"):
+                with open(path) as fh:
+                    text = fh.read()
+                
+                m = re.search(r"__version__\s*=\s*['\"]([^'\"]+)['\"]", text)
+
+                if m:
+                    version = m.group(1)
+                    return
+
+        for loader in (from_pyproject, from_setup_cfg, from_setup_py, from_package_init):
+            loader()
+
+        if not version:
+            print("Could not determine the project version (checked pyproject.toml, setup.cfg, setup.py, __init__.py).", file=sys.stderr)
+            sys.exit(1)
+
+        print(name or "")
+        print(version)
+        PY
+        )
+
+        NAME=$(printf '%s\n' "${RESOLVED}" | sed -n '1p')
+        VERSION=$(printf '%s\n' "${RESOLVED}" | sed -n '2p')
+
+        if [[ "${NAME}" == */* ]]; then
+          GROUP_ID="${NAME%%/*}"
+          ARTIFACT_ID="${NAME##*/}"
+        else
+          GROUP_ID=""
+          ARTIFACT_ID="${NAME}"
+        fi
+
+        SHORT_SHA=$(git rev-parse --short HEAD)
+        IMAGE_TAG="${VERSION}-${SHORT_SHA}"
+
+        echo "group-id=${GROUP_ID}" >> "$GITHUB_OUTPUT"
+        echo "artifact-id=${ARTIFACT_ID}" >> "$GITHUB_OUTPUT"
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        echo "image-tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"

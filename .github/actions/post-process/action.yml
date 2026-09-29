@@ -1,0 +1,37 @@
+name: "Post Process"
+description: >
+  Always-run post stage that publishes a summary and optionally sends a webhook
+  notification, regardless of success/failure.
+
+inputs:
+  status:
+    required: true
+  version:
+    required: false
+    default: ""
+  image-ref:
+    required: false
+    default: ""
+  notify-webhook:
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Write run summary
+      shell: bash
+      run: |
+        {
+          echo "### :checkered_flag: Pipeline Result: ${{ inputs.status }}"
+          echo "- version: \`${{ inputs.version }}\`"
+          echo "- image: \`${{ inputs.image-ref }}\`"
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Send notification
+      if: inputs.notify-webhook != ''
+      shell: bash
+      run: |
+        curl -sS -X POST -H 'Content-Type: application/json' \
+          -d "{\"text\":\"Pipeline ${{ inputs.status }} - version ${{ inputs.version }} - image ${{ inputs.image-ref }}\"}" \
+          "${{ inputs.notify-webhook }}"

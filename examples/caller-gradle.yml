@@ -1,0 +1,13 @@
+name: Release (Gradle)
+on:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: kimsang-mok/github-actions-lib/.github/workflows/ci-release.yml@main
+    with:
+      image-name: my-org/my-kotlin-app
+      build-tool: gradle  # auto-detected from build.gradle(.kts)
+      runtime-version: "21"
+    secrets: inherit

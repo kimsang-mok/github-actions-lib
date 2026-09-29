@@ -1,0 +1,39 @@
+name: "Resolve Version (Maven)"
+description: "Reads groupId/artifactId/version from the Maven project and computes the CI image tag."
+
+inputs:
+  working-directory:
+    description: "Directory that contains pom.xml."
+    required: false
+    default: "."
+
+outputs:
+  group-id:
+    value: ${{ steps.resolve.outputs.group-id }}
+  artifact-id:
+    value: ${{ steps.resolve.outputs.artifact-id }}
+  version:
+    value: ${{ steps.resolve.outputs.version }}
+  image-tag:
+    value: ${{ steps.resolve.outputs.image-tag }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Resolve project coordinates
+      id: resolve
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+
+        GROUP_ID=$(mvn -B -q -DforceStdout help:evaluate -Dexpression=project.groupId)
+        ARTIFACT_ID=$(mvn -B -q -DforceStdout help:evaluate -Dexpression=project.artifactId)
+        VERSION=$(mvn -B -q -DforceStdout help:evaluate -Dexpression=project.version)
+        SHORT_SHA=$(git rev-parse --short HEAD)
+        IMAGE_TAG="${VERSION}-${SHORT_SHA}"
+
+        echo "group-id=${GROUP_ID}" >> "$GITHUB_OUTPUT"
+        echo "artifact-id=${ARTIFACT_ID}" >> "$GITHUB_OUTPUT"
+        echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+        echo "image-tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"

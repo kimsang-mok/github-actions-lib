@@ -1,0 +1,46 @@
+name: "Build (Python)"
+description: "Installs dependencies and runs the test suite for a Python project."
+
+inputs:
+  working-directory:
+    description: "Directory that contains the Python project."
+    required: false
+    default: "."
+  skip-tests:
+    description: "Skip the test suite."
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install dependencies
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        echo "===== Install dependencies (python) ====="
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then
+          pip install -r requirements.txt
+        elif [ -f pyproject.toml ]; then
+          pip install .
+        elif [ -f setup.py ] || [ -f setup.cfg ]; then
+          pip install .
+        fi
+        pip install pytest
+
+    - name: Test
+      if: ${{ inputs.skip-tests != 'true' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        echo "===== Test (python) ====="
+        python -m pytest --junitxml=junit.xml
+
+    - name: Publish unit test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-test-results
+        path: ${{ inputs.working-directory }}/junit.xml
+        if-no-files-found: ignore

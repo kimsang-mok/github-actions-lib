@@ -1,0 +1,126 @@
+name: "Docker Build"
+description: >
+  Builds & unit-tests the project using the detected build tool, then builds and
+  pushes a Docker image tagged with the CI image tag.
+
+inputs:
+  build-tool:
+    description: "Build tool: maven | gradle | npm | python."
+    required: true
+  runtime-version:
+    required: false
+    default: ""
+  working-directory:
+    required: false
+    default: "."
+  dockerfile:
+    required: false
+    default: "Dockerfile"
+  registry:
+    required: true
+  image-name:
+    required: true
+  image-tag:
+    required: true
+  registry-username:
+    required: true
+  registry-password:
+    required: true
+  skip-tests:
+    required: false
+    default: "true"
+
+outputs:
+  image-ref:
+    value: ${{ steps.build.outputs.ref }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    # ---- runtime setup, routed to the matching provider -------------------
+    - name: Setup runtime (maven)
+      if: inputs.build-tool == 'maven'
+      uses: $/.github/actions/setup/maven
+      with:
+        runtime-version: ${{ inputs.runtime-version }}
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Setup runtime (gradle)
+      if: inputs.build-tool == 'gradle'
+      uses: $/.github/actions/setup/gradle
+      with:
+        runtime-version: ${{ inputs.runtime-version }}
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Setup runtime (npm)
+      if: inputs.build-tool == 'npm'
+      uses: $/.github/actions/setup/npm
+      with:
+        runtime-version: ${{ inputs.runtime-version }}
+        working-directory: ${{ inputs.working-directory }}
+
+    - name: Setup runtime (python)
+      if: inputs.build-tool == 'python'
+      uses: $/.github/actions/setup/python
+      with:
+        runtime-version: ${{ inputs.runtime-version }}
+        working-directory: ${{ inputs.working-directory }}
+
+    # ---- build + test, routed to the matching provider --------------------
+    - name: Build & test (maven)
+      if: inputs.build-tool == 'maven'
+      uses: $/.github/actions/build/maven
+      with:
+        working-directory: ${{ inputs.working-directory }}
+        skip-tests: ${{ inputs.skip-tests }}
+
+    - name: Build & test (gradle)
+      if: inputs.build-tool == 'gradle'
+      uses: $/.github/actions/build/gradle
+      with:
+        working-directory: ${{ inputs.working-directory }}
+        skip-tests: ${{ inputs.skip-tests }}
+
+    - name: Build & test (npm)
+      if: inputs.build-tool == 'npm'
+      uses: $/.github/actions/build/npm
+      with:
+        working-directory: ${{ inputs.working-directory }}
+        skip-tests: ${{ inputs.skip-tests }}
+
+    - name: Build & test (python)
+      if: inputs.build-tool == 'python'
+      uses: $/.github/actions/build/python
+      with:
+        working-directory: ${{ inputs.working-directory }}
+        skip-tests: ${{ inputs.skip-tests }}
+
+    # ---- container image --------------------------------------------------
+    - name: Log in to ${{ inputs.registry }}
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.registry-username }}
+        password: ${{ inputs.registry-password }}
+
+    - name: Build & push CI image
+      id: build
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        echo "===== Docker Build ====="
+        REF="${{ inputs.registry }}/${{ inputs.image-name }}:${{ inputs.image-tag }}"
+
+        docker build -f "${{ inputs.dockerfile }}" -t "${REF}" .
+        docker push "${REF}"
+
+        echo "ref=${REF}" >> "$GITHUB_OUTPUT"
+
+        {
+          echo "### :whale: Docker Build"
+          echo "- image: \`${REF}\`"
+        } >> "$GITHUB_STEP_SUMMARY"

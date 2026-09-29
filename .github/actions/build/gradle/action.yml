@@ -1,0 +1,37 @@
+name: "Build (Gradle)"
+description: "Compiles, unit-tests and assembles a Gradle project."
+
+inputs:
+  working-directory:
+    description: "Directory that contains the Gradle build."
+    required: false
+    default: "."
+  skip-tests:
+    description: "Skip unit tests."
+    required: false
+    default: "true"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Build & unit test
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        echo "===== Build & Unit Test (gradle) ====="
+        GRADLE="./gradlew"
+        [ -x "${GRADLE}" ] || GRADLE="gradle"
+
+        if [ "${{ inputs.skip-tests }}" = "true" ]; then
+          ${GRADLE} --no-daemon build -x test
+        else
+          ${GRADLE} --no-daemon build
+        fi
+
+    - name: Publish unit test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: gradle-test-results
+        path: ${{ inputs.working-directory }}/build/test-results/**/*.xml
+        if-no-files-found: ignore
